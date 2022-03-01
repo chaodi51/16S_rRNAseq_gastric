@@ -1,0 +1,97 @@
+proj_name: Jenny_16SrRNA_20220106
+raw_fq: /mnt/isilon/zackular_lab_hpc/data/Jenny_16SrRNA_20220106/demultiplexed_fastq_gz
+manifest: /mnt/isilon/zackular_lab_hpc/data/Jenny_16SrRNA_20220106/demultiplexed_fastq_gz/manifest.tsv
+metadata: /mnt/isilon/zackular_lab_hpc/data/Jenny_16SrRNA_20220106/Jenny_16SrRNA_20220106_metadata.tsv
+metadata_differentials_transgene_gastric_PicoLab_Rodent_Diet: /mnt/isilon/zackular_lab_hpc/data/Jenny_16SrRNA_20220106/differentials_transgene_gastric_PicoLab_Rodent_Diet_metadata.tsv
+metadata_differentials_transgene_fecal_PicoLab_Rodent_Diet: /mnt/isilon/zackular_lab_hpc/data/Jenny_16SrRNA_20220106/differentials_transgene_fecal_PicoLab_Rodent_Diet_metadata.tsv 
+metadata_differentials_iron_deficiency_gastric: /mnt/isilon/zackular_lab_hpc/data/Jenny_16SrRNA_20220106/differentials_iron_deficiency_gastric_metadata.tsv
+metadata_differentials_iron_deficiency_fecal: /mnt/isilon/zackular_lab_hpc/data/Jenny_16SrRNA_20220106/differentials_iron_deficiency_fecal_metadata.tsv
+metadata_differentials_DCA_gastric_uninfected: /mnt/isilon/zackular_lab_hpc/data/Jenny_16SrRNA_20220106/differentials_DCA_gastric_uninfected_metadata.tsv
+metadata_differentials_DCA_fecal_uninfected: /mnt/isilon/zackular_lab_hpc/data/Jenny_16SrRNA_20220106/differentials_DCA_fecal_uninfected_metadata.tsv
+metadata_differentials_infection_gastric_H20: /mnt/isilon/zackular_lab_hpc/data/Jenny_16SrRNA_20220106/differentials_infection_gastric_H20_metadata.tsv
+metadata_differentials_infection_gastric_DCA: /mnt/isilon/zackular_lab_hpc/data/Jenny_16SrRNA_20220106/differentials_infection_gastric_DCA_metadata.tsv
+metadata_differentials_infection_fecal_H20: /mnt/isilon/zackular_lab_hpc/data/Jenny_16SrRNA_20220106/differentials_infection_fecal_H20_metadata.tsv
+metadata_differentials_infection_fecal_DCA: /mnt/isilon/zackular_lab_hpc/data/Jenny_16SrRNA_20220106/differentials_infection_fecal_DCA_metadata.tsv
+metadata_differentials_4groups_gastric: /mnt/isilon/zackular_lab_hpc/data/Jenny_16SrRNA_20220106/differentials_4groups_gastric_metadata.tsv
+metadata_differentials_4groups_fecal: /mnt/isilon/zackular_lab_hpc/data/Jenny_16SrRNA_20220106/differentials_4groups_fecal_metadata.tsv
+
+
+# Fastq file suffix, following the read pair designation
+suffix: .fastq
+# suffix: _1.fastq.gz
+
+# Read pair designations
+# r1_suf: 1
+# r2_suf: 2
+r1_suf: R1
+r2_suf: R2
+
+# QIIME2-specific flags
+# Defaults for amplicon tag-sequencing - uncomment only parameters you need.
+
+# ## 18S default (Stoeck et al. 2010 V4 primers)
+# primerF: CCAGCASCYGCGGTAATTCC
+# primerR: ACTTTCGTTCTTGATYRA
+# primer_err: 0.4
+# primer_overlap: 3
+# # Merging reads for 18S:
+# minoverlap: 10
+# maxdiff: 4
+# minlength: 270
+
+# 16S default (Parada et al. modified EMP primers)
+# primerF: GTGYCAGCMGCCGCGGTAA
+# primerR: GGACTACNVGGGTWTCTAAT
+## illumina primers (515F - 806R) for V4 region
+primerF: GTGYCAGCMGCCGCGGTAA
+primerR: GGACTACNVGGGTWTCTAAT 
+primer_err: 0.1
+primer_overlap: 3
+# Merging reads for 16S
+minoverlap: 20
+maxdiff: 4
+minlength: 200
+
+## Database
+database: /vortexfs1/omics/huber/shu/db/pr2-db/V4-pr2_4.12.0.qza
+database_classified: /vortexfs1/omics/huber/shu/db/pr2-db/V4-pr2_4.12.0-classifier.qza
+database_tax: /vortexfs1/omics/huber/shu/db/pr2-db/pr2_4.12.0_tax.qza
+classifier: /mnt/isilon/zackular_lab_hpc/users/dic/projects/NSAID_gender_2019_16SrRNA/resources/gg-13-8-99-nb-classifier.qza
+
+## DADA2 - ASV flags
+# truncation_len-f + truncation_len-r should > amplicon(V4 ~300bp) + overlap (>20bp)
+truncation_len-f: 220 # critical, need to determine from the QC report
+truncation_len-r: 200 # reverse reads usually have lower quanlity at the end, and thus should truncate more
+training: 1000000 #should be set higher for a non-test dataset
+chimera: consensus
+
+## diversity
+sampling_depth: 1353
+# Retained 110,946 (1.98%) features in 82 (86.32%) samples at the specifed sampling depth.
+# samples are removed
+# Noto.16.18G	962
+# Noto.16.9G	697
+# Noto.16.14G	492
+# Noto.16.1G	421
+# Noto.14.26G	322
+# Noto.14.4G	287
+# Noto.14.2G	149
+# Noto.16.12G	146
+# Noto.16.13G	75
+# Noto.16.3G	2
+# DNAfreewater3.20211116	0
+# Extractemptywell3.20211116	0
+# Noto.14.22G	0
+
+## OTU clustering
+
+# Quality filtering of merged reads
+minphred: 4
+qualwindow: 3 
+
+# De novo OTU clustering
+denovo_perc_id: 0.97
+denovo_otu-thread: 1
+
+# Chimera checking
+chimera-thread: 1
