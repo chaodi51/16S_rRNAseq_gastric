@@ -2,8 +2,8 @@
 
 [![Snakemake](https://img.shields.io/badge/snakemake-≥5.7.0-brightgreen.svg)](https://snakemake.bitbucket.io)
 
-This is using the standard Snakemake workflow template.
-Make sure codes are in the respective folders under `workflow/`, i.e. `scripts`, `rules`, and `envs`. Define the entry point of the workflow in the `Snakefile` and the main configuration in the `./config/16S-rRNA-seq.yaml` file.
+This is a Snakemake workflow encapusulating Qiime2 modules.
+The codes are distributed in the respective folders under `workflow/`, i.e. `scripts`, `rules`, and `envs`. Define the entry point of the workflow in the `Snakefile` and the main configuration in the `./config/16S-rRNA-seq.yaml` file. The .rmd script is used to analyze and visulize Qiime2 outputs.  
 
 ## Project
 rRNA gene sequencing of the gastric microbiota of mice

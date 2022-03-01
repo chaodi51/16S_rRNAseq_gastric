@@ -1,0 +1,867 @@
+---
+title: "Jenny_16SrRNA_20220106 qiime2_post_analysis_v3"
+author: "Chao Di, dic@chop.edu"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: html_document
+---
+
+```{r, setup, include = FALSE}
+# replace with path where you want the results to be
+knitr::opts_knit$set(root.dir="~/Documents/Joseph Zackular lab/Jenny_16SrRNA_20220106/qiime2")
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, 
+                      root.dir="~/Documents/Joseph Zackular lab/Jenny_16SrRNA_20220106/qiime2")
+```
+
+## Abstract {-}
+This script using `qiime2R` package to visualize Qiime2 artifacts (.qza files) and do post Qiime2 analysis, including ploting PCoA, drawing taxa heatmap and barplot, differential abundance analysis, ploting phylogenetic tree etc.
+
+```{r, include=FALSE}
+library(tidyverse)
+library(qiime2R)
+library(ggrepel) # for offset labels
+library(ggtree) # for visualizing phylogenetic trees
+library(ape) # for manipulating phylogenetic trees
+library(vegan) # stat functions
+library(qiimer) # Kyle’s package to read in qiime data to R
+library(usedist) # kyle’s package to work with distances
+```
+
+### Load qiime2 artifacts and metadata {-}
+```{r}
+proj = "Jenny_16SrRNA_20220106"
+# read feature table
+ASVs <- read_qza(paste0("asv/dada2/", proj, "-asv-table.qza"))
+cat("# Show 5 samples and first 5 taxa:\n")
+ASVs$data[1:5,6:10]
+
+# read metadata
+metadata <- read_q2metadata(paste0("../", proj, "_metadata.tsv"))
+# samples are removed due to low abundance
+rmsamples <- c(
+'Noto.16.18G', 
+'Noto.16.9G',
+'Noto.16.14G',
+'Noto.16.1G',
+'Noto.14.26G',
+'Noto.14.4G',
+'Noto.14.2G',
+'Noto.16.12G',
+'Noto.16.13G',
+'Noto.16.3G',
+'DNAfreewater3.20211116',
+'Extractemptywell3.20211116',
+'Noto.14.22G',
+'Noto.16.20G')
+metadata <- metadata %>% filter(!SampleID %in% rmsamples)
+
+
+cat("# Here is what metadata looks like:\n")
+head(metadata)
+
+# read taxonomy
+taxonomy <- read_qza(paste0("asv/taxonomy/", proj, "-taxonomy.qza"))
+taxonomy <- parse_taxonomy(taxonomy$data)
+cat("# Taxonomy assignment:\n")
+head(taxonomy)
+
+# create Phyloseq object
+# physeq<-qza_to_phyloseq(
+#     features=paste0("asv/dada2/", proj, "-asv-table.qza"),
+#     tree=paste0("asv/phylogeny/", proj, "-rooted_tree.qza"),
+#     taxonomy=paste0("asv/taxonomy/", proj, "-taxonomy.qza"),
+#     metadata = paste0("../", proj, "_metadata.tsv")
+#     )
+# cat("# create a Phyloseq object, which includes the following stuffs: \n
+#     (OTU table is actually ASV table when you do ASV) \n")
+# physeq
+
+```
+
+### Post-Qiime2 analysis - Visualizations {-}
+* Alpha diversity between subgroups
+
+```{r}
+shannon <- read_qza(paste0("asv/diversity/core-metrics-results/", proj, "-shannon-vector.qza"))
+shannon <- shannon$data %>% rownames_to_column("SampleID")
+metadata <- metadata %>% left_join(shannon)
+head(metadata)
+```
+
+* **Boxplots for each comparison in Fecal samples:**  
+  + #1 b.compare 14.1 F-14.9 F (uninfected WT FVBN mice) vs. 14.10 F-14.14 F (uninfected INS-GAS mice with gastrin  transgene)   
+  + #2 b.compare 14.15 F-14.19 F (uninfected INS-GAS mice on iron-replete diet) vs. 14.20 F-14.26 F (uninfected INS-GAS mice on iron-depleted diet).   
+  + #3 b.compare 16.1 F – 16.5 F (uninfected INS-GAS mice given water alone) vs. 16.6 F – 16.10 F (uninfected INS-GAS mice given water supplemented with 100 uM DCA).  
+  + #4 c.compare 16.1 F – 16.5 F (uninfected INS-GAS mice given water alone) vs. 16.11 F – 16.15 F (H. pylori infected INS-GAS mice given water alone)  
+  + #4 d.compare 16.6 F- 16.10 F (uninfected INS-GAS mice give water supplemented with 100 uM DCA) vs. 16.16 F – 16.20 F (H. pylori infected INS-GAS mice give water supplemented with 100 uM DCA).  
+    
+```{r fig.height=5, fig.width=3}
+# plot each comparison and do t-test
+Fcomp1 <- metadata %>% filter(Sample_type=='fecal pellet' & Diet_Or_Water_treatment=='PicoLab Rodent Diet 5L0D* (standard)')
+t_pvalue1 <- paste0("#1b. t-test pvalue: ", t.test(shannon ~ Mouse_background, data=Fcomp1)$p.value, "\n")
+
+Fcomp1
+pdf("Shannon_diversity_comparisons_Fecal.pdf", 4, 6 )
+Fcomp1 %>% ggplot(aes(x=Mouse_background, y=shannon, color=Mouse_background)) +
+  stat_summary(geom="bar", fun.data=mean_se, fill=NA, width=0.5) +
+  geom_jitter(shape=21, width=0.2, height=0, size = 3)+
+  theme_classic() +
+  theme(legend.position = "none", text = element_text(family = "Helvetica")) + 
+  scale_color_manual(values = c("black", "darkgrey")) +
+  ylab("Shannon diversity") +
+  xlab("Mouse background")
+
+
+Fcomp2 <- metadata %>% filter(Sample_type=='fecal pellet' & grepl('TestDiet', Diet_Or_Water_treatment))
+t_pvalue2 <- paste0("#2b. t-test pvalue: ", t.test(shannon ~ Diet_Or_Water_treatment, data=Fcomp2)$p.value, "\n")
+Fcomp2 <- Fcomp2 %>% dplyr::mutate(Diet_Or_Water_treatment = str_split(Diet_Or_Water_treatment, " ", simplify=TRUE)[ ,3]) 
+Fcomp2$Diet_Or_Water_treatment <- factor(Fcomp2$Diet_Or_Water_treatment, levels=c("Iron-replete", "Iron-depleted"))
+
+Fcomp2
+Fcomp2 %>% ggplot(aes(x=Diet_Or_Water_treatment, y=shannon, color=Diet_Or_Water_treatment)) +
+  stat_summary(geom="bar", fun.data=mean_se, fill=NA, width=0.5) +
+  geom_jitter(shape=21, width=0.2, height=0, size = 3)+
+  theme_classic() +
+  theme(legend.position = "none", text = element_text(family = "Helvetica")) + 
+  scale_color_manual(values = c("black", "darkgrey")) +
+  ylab("Shannon diversity") + 
+  xlab("Iron supply")
+
+
+Fcomp3 <- metadata %>% filter(Sample_type=='fecal pellet' & grepl('H20', Diet_Or_Water_treatment) & Infection=="Uninfected")
+t_pvalue3 <- paste0("#3b. t-test pvalue: ", t.test(shannon ~ Diet_Or_Water_treatment, data=Fcomp3)$p.value, "\n")
+
+Fcomp3
+Fcomp3 %>% ggplot(aes(x=Diet_Or_Water_treatment, y=shannon, color=Diet_Or_Water_treatment)) +
+  stat_summary(geom="bar", fun.data=mean_se, fill=NA, width=0.5) +
+  geom_jitter(shape=21, width=0.2, height=0, size = 3)+
+  theme_classic() +
+  theme(legend.position = "none", text = element_text(family = "Helvetica")) + 
+  scale_color_manual(values = c("black", "darkgrey")) +
+  ylab("Shannon diversity") +
+  xlab("Water supply")
+
+
+Fcomp4 <- metadata %>% filter(Sample_type=='fecal pellet' & grepl('^H20', Diet_Or_Water_treatment))
+t_pvalue4 <- paste0("#4c. t-test pvalue: ", t.test(shannon ~ Infection, data=Fcomp4)$p.value, "\n")
+
+Fcomp4
+Fcomp4 %>% ggplot(aes(x=Infection, y=shannon, color=Infection)) +
+  stat_summary(geom="bar", fun.data=mean_se, fill=NA, width=0.5) +
+  geom_jitter(shape=21, width=0.2, height=0, size = 3)+
+  theme_classic() +
+  theme(legend.position = "none", text = element_text(family = "Helvetica")) + 
+  scale_color_manual(values = c("black", "darkgrey")) +
+  ylab("Shannon diversity") +
+  xlab("Infection")
+
+
+Fcomp5 <- metadata %>% filter(Sample_type=='fecal pellet' & grepl('DCA', Diet_Or_Water_treatment))
+t_pvalue5 <- paste0("#4d. t-test pvalue: ", t.test(shannon ~ Infection, data=Fcomp5)$p.value, "\n")
+
+Fcomp5
+Fcomp5 %>% ggplot(aes(x=Infection, y=shannon, color=Infection)) +
+  stat_summary(geom="bar", fun.data=mean_se, fill=NA, width=0.5) +
+  geom_jitter(shape=21, width=0.2, height=0, size = 3)+
+  theme_classic() +
+  theme(legend.position = "none", text = element_text(family = "Helvetica")) + 
+  scale_color_manual(values = c("black", "darkgrey")) +
+  ylab("Shannon diversity") +
+  xlab("Infection")
+
+dev.off()
+cat(t_pvalue1, t_pvalue2, t_pvalue3, t_pvalue4, t_pvalue5)
+
+```
+* **Boxplots for each comparison in Gatric samples:**
+  + #1 a.compare 14.1 G-14.9 G (uninfected WT FVBN mice) vs. 14.10 G-14.14 G (uninfected INS-GAS mice with gastrin transgene).
+  + #2 a.compare 14.15 G-14.19 G (uninfected INS-GAS mice on iron-replete diet) vs. 14.20 G-14.26 G (uninfected INS-GAS mice on iron-depleted diet).
+  + #3 a.compare 16.1 G – 16.5 G (uninfected INS-GAS mice given water alone) vs. 16.6 G – 16.10 G (uninfected INS-GAS mice give water supplemented with 100 uM DCA).
+  + #4 a.compare 16.1 G – 16.5 G (uninfected INS-GAS mice given water alone) vs. 16.11 G – 16.15 G (H. pylori infected INS-GAS mice given water alone)
+  + #4 b.compare 16.6 G- 16.10 G (uninfected INS-GAS mice give water supplemented with 100 uM DCA) vs. 16.16 G – 16.20 G (H. pylori infected INS-GAS mice give water supplemented with 100 uM DCA).
+
+```{r fig.height=5, fig.width=3}
+# plot each comparison and do t-test
+
+Gcomp1 <- metadata %>% filter(Sample_type=='gastric tissue' & Diet_Or_Water_treatment=='PicoLab Rodent Diet 5L0D* (standard)')
+t_pvalue1 <- paste0("#1a. t-test pvalue: ", t.test(shannon ~ Mouse_background, data=Gcomp1)$p.value, "\n")
+
+pdf("Shannon_diversity_comparisons_Gastric.pdf", 4, 6)
+Gcomp1
+Gcomp1 %>% ggplot(aes(x=Mouse_background, y=shannon, color=Mouse_background)) +
+  stat_summary(geom="bar", fun.data=mean_se, fill=NA, width=0.5) +
+  geom_jitter(shape=21, width=0.2, height=0, size = 3)+
+  theme_classic() +
+  theme(legend.position = "none", text = element_text(family = "Helvetica")) + 
+  scale_color_manual(values = c("black", "darkgrey")) +
+  ylab("Shannon diversity") +
+  xlab("Mouse background")
+
+Gcomp2 <- metadata %>% filter(Sample_type=='gastric tissue' & grepl('TestDiet', Diet_Or_Water_treatment))
+t_pvalue2 <- paste0("#2a. t-test pvalue: ", t.test(shannon ~ Diet_Or_Water_treatment, data=Gcomp2)$p.value, "\n")
+Gcomp2 <- Gcomp2 %>% dplyr::mutate(Diet_Or_Water_treatment = str_split(Diet_Or_Water_treatment, " ", simplify=TRUE)[ ,3])
+Gcomp2$Diet_Or_Water_treatment <- factor(Gcomp2$Diet_Or_Water_treatment, levels=c("Iron-replete", "Iron-depleted"))
+
+Gcomp2
+Gcomp2 %>% ggplot(aes(x=Diet_Or_Water_treatment, y=shannon, color=Diet_Or_Water_treatment)) +
+  stat_summary(geom="bar", fun.data=mean_se, fill=NA, width=0.5) +
+  geom_jitter(shape=21, width=0.2, height=0, size = 3)+
+  theme_classic() +
+  theme(legend.position = "none", text = element_text(family = "Helvetica")) + 
+  scale_color_manual(values = c("black", "darkgrey")) +
+  ylab("Shannon diversity") +
+  xlab("Iron supply")
+
+Gcomp3 <- metadata %>% filter(Sample_type=='gastric tissue' & grepl('H20', Diet_Or_Water_treatment) & Infection=="Uninfected")
+t_pvalue3 <- paste0("#3a. t-test pvalue: ", t.test(shannon ~ Diet_Or_Water_treatment, data=Gcomp3)$p.value, "\n")
+
+Gcomp3
+Gcomp3 %>% ggplot(aes(x=Diet_Or_Water_treatment, y=shannon, color=Diet_Or_Water_treatment)) +
+  stat_summary(geom="bar", fun.data=mean_se, fill=NA, width=0.5) +
+  geom_jitter(shape=21, width=0.2, height=0, size = 3)+
+  theme_classic() +
+  theme(legend.position = "none", text = element_text(family = "Helvetica")) + 
+  scale_color_manual(values = c("black", "darkgrey")) +
+  ylab("Shannon diversity") +
+  xlab("Water supply")
+
+
+Gcomp4 <- metadata %>% filter(Sample_type=='gastric tissue' & grepl('^H20', Diet_Or_Water_treatment))
+t_pvalue4 <- paste0("#4a. t-test pvalue: ", t.test(shannon ~ Infection, data=Gcomp4)$p.value, "\n")
+
+Gcomp4
+Gcomp4 %>% ggplot(aes(x=Infection, y=shannon, color=Infection)) +
+  stat_summary(geom="bar", fun.data=mean_se, fill=NA, width=0.5) +
+  geom_jitter(shape=21, width=0.2, height=0, size = 3)+
+  theme_classic() +
+  theme(legend.position = "none", text = element_text(family = "Helvetica")) + 
+  scale_color_manual(values = c("black", "darkgrey")) +
+  ylab("Shannon diversity") +
+  xlab("Infection")
+
+Gcomp5 <- metadata %>% filter(Sample_type=='gastric tissue' & grepl('DCA', Diet_Or_Water_treatment))
+t_pvalue5 <- paste0("#4b. t-test pvalue: ", t.test(shannon ~ Infection, data=Gcomp5)$p.value, "\n")
+
+Gcomp5
+Gcomp5 %>% ggplot(aes(x=Infection, y=shannon, color=Infection)) +
+  stat_summary(geom="bar", fun.data=mean_se, fill=NA, width=0.5) +
+  geom_jitter(shape=21, width=0.2, height=0, size = 3)+
+  theme_classic() +
+  theme(legend.position = "none", text = element_text(family = "Helvetica")) + 
+  scale_color_manual(values = c("black", "darkgrey")) +
+  ylab("Shannon diversity") +
+  xlab("Infection")
+
+dev.off()
+cat(t_pvalue1, t_pvalue2, t_pvalue3, t_pvalue4, t_pvalue5)
+
+```
+* Perform Permutational Multivariate Analysis of Variance (PERMANOVA) test for beta diversity difference among communities
+  + for fecal pellet:
+
+```{r}
+wunifrac_dist <- read_qza(paste0("asv/dada2/filter/", proj, "-weighted_unifrac_distance_matrix_transgene_fecal_PicoLab_Rodent_Diet.qza"))
+wu <- wunifrac_dist$data
+## metadata has the SampleID and the groups to compare in one column, make sure the order aligns between the metadata and the distance matrix.
+dist_toTest <- usedist::dist_subset(wu, Fcomp1$SampleID)
+res_permanova <- vegan::adonis(formula = dist_toTest ~ Mouse_background, data = Fcomp1)
+Fcomp1_permanova <- paste0("#1b. PERMANOVA pvalue: ", res_permanova$aov.tab$`Pr(>F)`[1], "\n")
+
+
+wunifrac_dist <- read_qza(paste0("asv/dada2/filter/", proj, "-weighted_unifrac_distance_matrix_iron_deficiency_fecal.qza"))
+wu <- wunifrac_dist$data
+## metadata has the SampleID and the groups to compare in one column, make sure the order aligns between the metadata and the distance matrix.
+dist_toTest <- usedist::dist_subset(wu, Fcomp2$SampleID)
+res_permanova <- vegan::adonis(formula = dist_toTest ~ Diet_Or_Water_treatment, data = Fcomp2)
+Fcomp2_permanova <- paste0("#2b. PERMANOVA pvalue: ", res_permanova$aov.tab$`Pr(>F)`[1], "\n")
+
+
+wunifrac_dist <- read_qza(paste0("asv/dada2/filter/", proj,
+"-weighted_unifrac_distance_matrix_DCA_fecal_uninfected.qza"))
+wu <- wunifrac_dist$data
+## metadata has the SampleID and the groups to compare in one column, make sure the order aligns between the metadata and the distance matrix.
+dist_toTest <- usedist::dist_subset(wu, Fcomp3$SampleID)
+res_permanova <- vegan::adonis(formula = dist_toTest ~ Diet_Or_Water_treatment, data = Fcomp3)
+Fcomp3_permanova <- paste0("#3b. PERMANOVA pvalue: ", res_permanova$aov.tab$`Pr(>F)`[1], "\n")
+
+
+wunifrac_dist <- read_qza(paste0("asv/dada2/filter/", proj,
+"-weighted_unifrac_distance_matrix_infection_fecal_H20.qza"))
+wu <- wunifrac_dist$data
+## metadata has the SampleID and the groups to compare in one column, make sure the order aligns between the metadata and the distance matrix.
+dist_toTest <- usedist::dist_subset(wu, Fcomp4$SampleID)
+res_permanova <- vegan::adonis(formula = dist_toTest ~ Infection, data = Fcomp4)
+Fcomp4_permanova <- paste0("#4c. PERMANOVA pvalue: ", res_permanova$aov.tab$`Pr(>F)`[1], "\n")
+
+wunifrac_dist <- read_qza(paste0("asv/dada2/filter/", proj,
+"-weighted_unifrac_distance_matrix_infection_fecal_DCA.qza"))
+wu <- wunifrac_dist$data
+## metadata has the SampleID and the groups to compare in one column, make sure the order aligns between the metadata and the distance matrix.
+dist_toTest <- usedist::dist_subset(wu, Fcomp5$SampleID)
+res_permanova <- vegan::adonis(formula = dist_toTest ~ Infection, data = Fcomp5)
+Fcomp5_permanova <- paste0("#4d. PERMANOVA pvalue: ", res_permanova$aov.tab$`Pr(>F)`[1], "\n")
+
+cat(Fcomp1_permanova, Fcomp2_permanova, Fcomp3_permanova, Fcomp4_permanova, Fcomp5_permanova)
+
+```
+
+  + for gastric tissue:
+
+```{r}
+wunifrac_dist <- read_qza(paste0("asv/dada2/filter/", proj, "-weighted_unifrac_distance_matrix_transgene_gastric_PicoLab_Rodent_Diet.qza"))
+wu <- wunifrac_dist$data
+## metadata has the SampleID and the groups to compare in one column, make sure the order aligns between the metadata and the distance matrix.
+dist_toTest <- usedist::dist_subset(wu, Gcomp1$SampleID)
+res_permanova <- vegan::adonis(formula = dist_toTest ~ Mouse_background, data = Gcomp1)
+Gcomp1_permanova <- paste0("#1a. PERMANOVA pvalue: ", res_permanova$aov.tab$`Pr(>F)`[1], "\n")
+
+
+wunifrac_dist <- read_qza(paste0("asv/dada2/filter/", proj, "-weighted_unifrac_distance_matrix_iron_deficiency_gastric.qza"))
+wu <- wunifrac_dist$data
+## metadata has the SampleID and the groups to compare in one column, make sure the order aligns between the metadata and the distance matrix.
+dist_toTest <- usedist::dist_subset(wu, Gcomp2$SampleID)
+res_permanova <- vegan::adonis(formula = dist_toTest ~ Diet_Or_Water_treatment, data = Gcomp2)
+Gcomp2_permanova <- paste0("#2a. PERMANOVA pvalue: ", res_permanova$aov.tab$`Pr(>F)`[1], "\n")
+
+
+wunifrac_dist <- read_qza(paste0("asv/dada2/filter/", proj,
+"-weighted_unifrac_distance_matrix_DCA_gastric_uninfected.qza"))
+wu <- wunifrac_dist$data
+## metadata has the SampleID and the groups to compare in one column, make sure the order aligns between the metadata and the distance matrix.
+dist_toTest <- usedist::dist_subset(wu, Gcomp3$SampleID)
+res_permanova <- vegan::adonis(formula = dist_toTest ~ Diet_Or_Water_treatment, data = Gcomp3)
+Gcomp3_permanova <- paste0("#3a. PERMANOVA pvalue: ", res_permanova$aov.tab$`Pr(>F)`[1], "\n")
+
+
+wunifrac_dist <- read_qza(paste0("asv/dada2/filter/", proj,
+"-weighted_unifrac_distance_matrix_infection_gastric_H20.qza"))
+wu <- wunifrac_dist$data
+## metadata has the SampleID and the groups to compare in one column, make sure the order aligns between the metadata and the distance matrix.
+dist_toTest <- usedist::dist_subset(wu, Gcomp4$SampleID)
+res_permanova <- vegan::adonis(formula = dist_toTest ~ Infection, data = Gcomp4)
+Gcomp4_permanova <- paste0("#4a. PERMANOVA pvalue: ", res_permanova$aov.tab$`Pr(>F)`[1], "\n")
+
+wunifrac_dist <- read_qza(paste0("asv/dada2/filter/", proj,
+"-weighted_unifrac_distance_matrix_infection_gastric_DCA.qza"))
+wu <- wunifrac_dist$data
+## metadata has the SampleID and the groups to compare in one column, make sure the order aligns between the metadata and the distance matrix.
+dist_toTest <- usedist::dist_subset(wu, Gcomp5$SampleID)
+res_permanova <- vegan::adonis(formula = dist_toTest ~ Infection, data = Gcomp5)
+Gcomp5_permanova <- paste0("#4b. PERMANOVA pvalue: ", res_permanova$aov.tab$`Pr(>F)`[1], "\n")
+
+cat(Gcomp1_permanova, Gcomp2_permanova, Gcomp3_permanova, Gcomp4_permanova, Gcomp5_permanova)
+
+```
+
+
+* Plotting PCoA based on beta diversity matrices
+  + PCA for fecal pellet:
+
+```{r}
+wunifrac_pcoa <- read_qza(paste0("asv/diversity/core-metrics-results/", proj, "-weighted-unifrac-pcoa-results.qza"))
+
+PCs <- wunifrac_pcoa$data$Vectors %>% dplyr::select(SampleID, PC1, PC2)
+percentVar <- round(100 * wunifrac_pcoa$data$ProportionExplained %>% dplyr::select(PC1, PC2))
+pdf("b_diversity_wunifrac_PCoA_Fecal.pdf", 5, 4)
+
+PCs %>% right_join(Fcomp1) %>%
+  ggplot(aes(x=PC1, y=PC2, fill=Mouse_background, size=shannon)) +
+  geom_point(alpha=0.8, pch = 21) + #alpha controls transparency and helps when points are overlapping
+  theme_q2r() +
+  xlim(c(-0.25, 0.05)) +
+  ylim(c(-0.1, 0.1)) +
+  xlab(paste0("PCoA axis 1: (", percentVar$PC1, "%)")) +
+  ylab(paste0("PCoA axis 2: (", percentVar$PC2, "%)")) +
+  scale_fill_manual(values = c("black", "grey")) +
+  labs(size="Shannon diversity", fill="Mouse background")
+
+PCs %>% right_join(Fcomp2) %>%
+  ggplot(aes(x=PC1, y=PC2, fill=Diet_Or_Water_treatment, size=shannon)) +
+  geom_point(alpha=0.8, pch = 21) + #alpha controls transparency and helps when points are overlapping
+  theme_q2r() +
+  xlim(c(-0.25, 0.05)) +
+  ylim(c(-0.1, 0.1)) +
+  xlab(paste0("PCoA axis 1: (", percentVar$PC1, "%)")) +
+  ylab(paste0("PCoA axis 2: (", percentVar$PC2, "%)")) +
+  scale_fill_manual(values = c("black", "grey")) +
+  labs(size="Shannon diversity", fill="Iron supply")
+
+dev.off()
+
+PCs %>% right_join(Fcomp3) %>%
+  ggplot(aes(x=PC1, y=PC2, fill=Diet_Or_Water_treatment, size=shannon)) +
+  geom_point(alpha=0.8, pch = 21) + #alpha controls transparency and helps when points are overlapping
+  theme_q2r() +
+  xlim(c(-0.25, 0.05)) +
+  ylim(c(-0.1, 0.1)) +
+  xlab(paste0("PCoA axis 1: (", percentVar$PC1, "%)")) +
+  ylab(paste0("PCoA axis 2: (", percentVar$PC2, "%)")) +
+  scale_fill_manual(values = c("black", "grey")) +
+  labs(size="Shannon diversity", fill="Water supply")
+
+
+PCs %>% right_join(Fcomp4) %>%
+  ggplot(aes(x=PC1, y=PC2, fill=Infection, size=shannon)) +
+  geom_point(alpha=0.8, pch = 21) + #alpha controls transparency and helps when points are overlapping
+  theme_q2r() +
+  xlim(c(-0.25, 0.05)) + 
+  ylim(c(-0.1, 0.1)) +
+  xlab(paste0("PCoA axis 1: (", percentVar$PC1, "%)")) +
+  ylab(paste0("PCoA axis 2: (", percentVar$PC2, "%)")) +
+  scale_fill_manual(values = c("black", "grey")) +
+  labs(size="Shannon diversity", fill="Infection")
+
+PCs %>% right_join(Fcomp5) %>%
+  ggplot(aes(x=PC1, y=PC2, fill=Infection, size=shannon)) +
+  geom_point(alpha=0.8, pch = 21) + #alpha controls transparency and helps when points are overlapping
+  theme_q2r() +
+  xlim(c(-0.25, 0.05)) +
+  ylim(c(-0.1, 0.1)) +
+  xlab(paste0("PCoA axis 1: (", percentVar$PC1, "%)")) +
+  ylab(paste0("PCoA axis 2: (", percentVar$PC2, "%)")) +
+  scale_fill_manual(values = c("black", "grey")) +
+  labs(size="Shannon diversity", fill="Infection")
+
+
+```
+
+  + PCA for gastirc tissue:
+
+```{r}
+wunifrac_pcoa <- read_qza(paste0("asv/diversity/core-metrics-results/", proj, "-weighted-unifrac-pcoa-results.qza"))
+
+PCs <- wunifrac_pcoa$data$Vectors %>% dplyr::select(SampleID, PC1, PC2)
+percentVar <- round(100 * wunifrac_pcoa$data$ProportionExplained %>% dplyr::select(PC1, PC2))
+
+pdf("b_diversity_wunifrac_PCoA_Gastric.pdf", 5, 4)
+
+PCs %>% right_join(Gcomp1) %>%
+  ggplot(aes(x=PC1, y=PC2, fill=Mouse_background, size=shannon)) +
+  geom_point(alpha=0.8, pch = 21) + #alpha controls transparency and helps when points are overlapping
+  theme_q2r() +
+  xlim(c(-0.1, 0.4)) +
+  ylim(c(-0.05, 0.02)) +
+  xlab(paste0("PCoA axis 1: (", percentVar$PC1, "%)")) +
+  ylab(paste0("PCoA axis 2: (", percentVar$PC2, "%)")) +
+  scale_fill_manual(values = c("black", "grey")) +
+  labs(size="Shannon diversity", fill="Mouse background")
+
+PCs %>% right_join(Gcomp2) %>%
+  ggplot(aes(x=PC1, y=PC2, fill=Diet_Or_Water_treatment, size=shannon)) +
+  geom_point(alpha=0.8, pch = 21) + #alpha controls transparency and helps when points are overlapping
+  theme_q2r() +
+  xlim(c(-0.1, 0.4)) +
+  ylim(c(-0.05, 0.02)) +
+  xlab(paste0("PCoA axis 1: (", percentVar$PC1, "%)")) +
+  ylab(paste0("PCoA axis 2: (", percentVar$PC2, "%)")) +
+  scale_fill_manual(values = c("black", "grey")) +
+  labs(size="Shannon diversity", fill="Iron supply")
+
+dev.off()
+
+PCs %>% right_join(Gcomp3) %>%
+  ggplot(aes(x=PC1, y=PC2, fill=Diet_Or_Water_treatment, size=shannon)) +
+  geom_point(alpha=0.8, pch = 21) + #alpha controls transparency and helps when points are overlapping
+  theme_q2r() +
+  xlim(c(-0.1, 0.4)) +
+  ylim(c(-0.2, 0)) +
+  xlab(paste0("PCoA axis 1: (", percentVar$PC1, "%)")) +
+  ylab(paste0("PCoA axis 2: (", percentVar$PC2, "%)")) +
+  scale_fill_manual(values = c("black", "grey")) +
+  labs(size="Shannon diversity", fill="Water supply")
+
+PCs %>% right_join(Gcomp4) %>%
+  ggplot(aes(x=PC1, y=PC2, fill=Infection, size=shannon)) +
+  geom_point(alpha=0.8, pch = 21) + #alpha controls transparency and helps when points are overlapping
+  theme_q2r() +
+  xlim(c(-0.1, 0.4)) +
+  ylim(c(-0.2, 0)) +
+  xlab(paste0("PCoA axis 1: (", percentVar$PC1, "%)")) +
+  ylab(paste0("PCoA axis 2: (", percentVar$PC2, "%)")) +
+  scale_fill_manual(values = c("black", "grey")) +
+  labs(size="Shannon diversity", fill="Infection")
+
+PCs %>% right_join(Gcomp5) %>%
+  ggplot(aes(x=PC1, y=PC2, fill=Infection, size=shannon)) +
+  geom_point(alpha=0.8, pch = 21) + #alpha controls transparency and helps when points are overlapping
+  theme_q2r() +
+  xlim(c(-0.2, 0.4)) +
+  ylim(c(-0.2, 0)) +
+  xlab(paste0("PCoA axis 1: (", percentVar$PC1, "%)")) +
+  ylab(paste0("PCoA axis 2: (", percentVar$PC2, "%)")) +
+  scale_fill_manual(values = c("black", "grey")) +
+  labs(size="Shannon diversity", fill="Infection")
+
+
+```
+
+* Plotting a Heatmap for taxonomy
+
+```{r echo=FALSE, fig.height=5, fig.width=14}
+taxasums<-summarize_taxa(ASVs$data, taxonomy)$Genus
+taxasums <- taxasums %>% dplyr::select(starts_with("Noto"))
+
+taxa_heatmap(taxasums, metadata, "Sample_type")
+taxa_heatmap(taxasums, metadata, "Mouse_background")
+taxa_heatmap(taxasums, metadata, "Infection")
+taxa_heatmap(taxasums, metadata, "Diet_Or_Water_treatment")
+```
+
+* Making a taxonomic barplot
+
+```{r include=TRUE, fig.width=14, fig.height=5}
+
+# filter out samples with all 0 values
+taxasums <- taxasums %>% select_if(~ !is.numeric(.) || sum(.) != 0)
+
+taxa_barplot(taxasums, metadata, "Sample_type")
+taxa_barplot(taxasums, metadata, "Mouse_background")
+taxa_barplot(taxasums, metadata, "Infection")
+taxa_barplot(taxasums, metadata, "Diet_Or_Water_treatment")
+```
+
+* Differential Abundance Analysis (Aldex2 method) - Volcano plot
+Expected Benjamini-Hochberg corrected P value of Welch’s t test was performed, p value<0.1 were shown as red dots
+```{r fig.width=8, fig.height=8}
+# set cutoff we.eBH<0.1
+Pcutoff=0.1
+
+ASVs <- read_qza(paste0("asv/dada2/",proj,"-asv-table.qza"))$data
+
+differentials_transgene_gastric_PicoLab_Rodent_Diet <- read_qza(paste0("asv/aldex2/differentials_transgene_gastric_PicoLab_Rodent_Diet/", proj, "-differentials.qza"))$data
+
+differentials_transgene_fecal_PicoLab_Rodent_Diet <- read_qza(paste0("asv/aldex2/differentials_transgene_fecal_PicoLab_Rodent_Diet/", proj, "-differentials.qza"))$data
+
+differentials_iron_deficiency_gastric <- read_qza(paste0("asv/aldex2/differentials_iron_deficiency_gastric/", proj, "-differentials.qza"))$data
+
+differentials_iron_deficiency_fecal <- read_qza(paste0("asv/aldex2/differentials_iron_deficiency_fecal/", proj, "-differentials.qza"))$data
+
+differentials_DCA_gastric_uninfected <- read_qza(paste0("asv/aldex2/differentials_DCA_gastric_uninfected/", proj, "-differentials.qza"))$data
+
+differentials_DCA_fecal_uninfected <- read_qza(paste0("asv/aldex2/differentials_DCA_fecal_uninfected/", proj, "-differentials.qza"))$data
+
+differentials_infection_gastric_H20 <- read_qza(paste0("asv/aldex2/differentials_infection_gastric_H20/", proj, "-differentials.qza"))$data
+
+differentials_infection_gastric_DCA <- read_qza(paste0("asv/aldex2/differentials_infection_gastric_DCA/", proj, "-differentials.qza"))$data
+
+differentials_infection_fecal_H20 <- read_qza(paste0("asv/aldex2/differentials_infection_fecal_H20/", proj, "-differentials.qza"))$data
+
+differentials_infection_fecal_DCA <- read_qza(paste0("asv/aldex2/differentials_infection_fecal_DCA/", proj, "-differentials.qza"))$data
+
+differentials_4groups_gastric <- read_qza(paste0("asv/aldex2/differentials_4groups_gastric/", proj, "-differentials.qza"))$data
+
+differentials_4groups_fecal <- read_qza(paste0("asv/aldex2/differentials_4groups_fecal/", proj, "-differentials.qza"))$data
+
+taxonomy <- read_qza(paste0("asv/taxonomy/", proj, "-taxonomy.qza"))$data
+tree <- read_qza(paste0("asv/phylogeny/", proj, "-rooted_tree.qza"))$data
+```
+
+1. How does the gastrin transgene effect the gastric and intestinal microbiota?
+  a. Gastric samples: compare 14.1 G-14.9 G (uninfected WT FVBN mice) vs. 14.10 G-14.14 G (uninfected INS-GAS mice with gastrin transgene).
+
+```{r echo=FALSE}
+diff_num1 <- dim(differentials_transgene_gastric_PicoLab_Rodent_Diet[which(differentials_transgene_gastric_PicoLab_Rodent_Diet$we.eBH < Pcutoff),])[1]
+cat(paste0("number of significantly changed taxa: ", diff_num1, "\n"))
+differentials_transgene_gastric_PicoLab_Rodent_Diet_tab <- differentials_transgene_gastric_PicoLab_Rodent_Diet %>% left_join(taxonomy) %>% filter(we.eBH < Pcutoff) %>% select(diff.btw, we.eBH, Taxon)
+colnames(differentials_transgene_gastric_PicoLab_Rodent_Diet_tab) = c("log2FC","q-value","Taxon")
+differentials_transgene_gastric_PicoLab_Rodent_Diet_tab
+
+differentials_transgene_gastric_PicoLab_Rodent_Diet %>%
+  left_join(taxonomy) %>%
+  mutate(Significant=if_else(we.eBH < Pcutoff,TRUE, FALSE)) %>%
+  mutate(Taxon=as.character(Taxon)) %>%
+  mutate(TaxonToPrint=if_else(we.eBH < Pcutoff, Taxon, "")) %>% #only provide a label to significant results
+  ggplot(aes(x=diff.btw, y=-log10(we.eBH), color=Significant, label=TaxonToPrint)) +
+  geom_text_repel(size=1.5, nudge_y=0.1) +
+  geom_point(alpha=0.6, shape=16) +
+  theme_q2r() +
+  xlab("log2(fold change)") +
+  ylab("-log10(q-value)") +
+  theme(legend.position="none") +
+  scale_color_manual(values=c("black","red"))
+```
+
+  b. Fecal samples: compare 14.1 F-14.9 F (uninfected WT FVBN mice) vs. 14.10 F-14.14 F (uninfected INS-GAS mice with gastrin transgene).
+
+```{r echo=FALSE}
+diff_num2 <- dim(differentials_transgene_fecal_PicoLab_Rodent_Diet[which(differentials_transgene_fecal_PicoLab_Rodent_Diet$we.eBH < Pcutoff),])[1]
+cat(paste0("number of significantly changed taxa: ", diff_num2, "\n"))
+differentials_transgene_fecal_PicoLab_Rodent_Diet_tab <- differentials_transgene_fecal_PicoLab_Rodent_Diet %>% left_join(taxonomy) %>% filter(we.eBH < Pcutoff) %>% select(diff.btw, we.eBH, Taxon)
+colnames(differentials_transgene_fecal_PicoLab_Rodent_Diet_tab) = c("log2FC","q-value","Taxon")
+differentials_transgene_fecal_PicoLab_Rodent_Diet_tab
+
+differentials_transgene_fecal_PicoLab_Rodent_Diet %>%
+  left_join(taxonomy) %>%
+  mutate(Significant=if_else(we.eBH < Pcutoff,TRUE, FALSE)) %>%
+  mutate(Taxon=as.character(Taxon)) %>%
+  mutate(TaxonToPrint=if_else(we.eBH < Pcutoff, Taxon, "")) %>% #only provide a label to significant results
+  ggplot(aes(x=diff.btw, y=-log10(we.eBH), color=Significant, label=TaxonToPrint)) +
+  geom_text_repel(size=1.5, nudge_y=0.1) +
+  geom_point(alpha=0.6, shape=16) +
+  theme_q2r() +
+  xlab("log2(fold change)") +
+  ylab("-log10(q-value)") +
+  theme(legend.position="none") +
+  scale_color_manual(values=c("black","red"))
+
+```
+
+2. How does iron deficiency effect the gastric and intestinal microbiota?
+  a. Gastric samples: compare 14.15 G-14.19 G (uninfected INS-GAS mice on iron-replete diet) vs. 14.20 G-14.26 G (uninfected INS-GAS mice on iron-depleted diet).
+
+```{r echo=FALSE}
+diff_num3 <- dim(differentials_iron_deficiency_gastric[which(differentials_iron_deficiency_gastric$we.eBH < Pcutoff),])[1]
+cat(paste0("number of significantly changed taxa: ", diff_num3, "\n"))
+differentials_iron_deficiency_gastric_tab <- differentials_iron_deficiency_gastric %>% left_join(taxonomy) %>% filter(we.eBH < Pcutoff) %>% select(diff.btw, we.eBH, Taxon)
+colnames(differentials_iron_deficiency_gastric_tab) = c("log2FC","q-value","Taxon")
+differentials_iron_deficiency_gastric_tab
+
+differentials_iron_deficiency_gastric %>%
+  left_join(taxonomy) %>%
+  mutate(Significant=if_else(we.eBH < Pcutoff,TRUE, FALSE)) %>%
+  mutate(Taxon=as.character(Taxon)) %>%
+  mutate(TaxonToPrint=if_else(we.eBH < Pcutoff, Taxon, "")) %>% #only provide a label to significant results
+  ggplot(aes(x=diff.btw, y=-log10(we.eBH), color=Significant, label=TaxonToPrint)) +
+  geom_text_repel(size=1.5, nudge_y=0.1) +
+  geom_point(alpha=0.6, shape=16) +
+  theme_q2r() +
+  xlab("log2(fold change)") +
+  ylab("-log10(q-value)") +
+  theme(legend.position="none") +
+  scale_color_manual(values=c("black","red"))
+
+```
+
+  b. Fecal samples: compare 14.15 F-14.19 F (uninfected INS-GAS mice on iron-replete diet) vs. 14.20 F-14.26 F (uninfected INS-GAS mice on iron-depleted diet).
+
+```{r echo=FALSE}
+diff_num4 <- dim(differentials_iron_deficiency_fecal[which(differentials_iron_deficiency_fecal$we.eBH < Pcutoff),])[1]
+cat(paste0("number of significantly changed taxa: ", diff_num4, "\n"))
+differentials_iron_deficiency_fecal_tab <- differentials_iron_deficiency_fecal %>% left_join(taxonomy) %>% filter(we.eBH < Pcutoff) %>% select(diff.btw, we.eBH, Taxon)
+colnames(differentials_iron_deficiency_fecal_tab) = c("log2FC","q-value","Taxon")
+differentials_iron_deficiency_fecal_tab
+
+differentials_iron_deficiency_fecal %>%
+  left_join(taxonomy) %>%
+  mutate(Significant=if_else(we.eBH < Pcutoff,TRUE, FALSE)) %>%
+  mutate(Taxon=as.character(Taxon)) %>%
+  mutate(TaxonToPrint=if_else(we.eBH < Pcutoff, Taxon, "")) %>% #only provide a label to significant results
+  ggplot(aes(x=diff.btw, y=-log10(we.eBH), color=Significant, label=TaxonToPrint)) +
+  geom_text_repel(size=1.5, nudge_y=0.1) +
+  geom_point(alpha=0.6, shape=16) +
+  theme_q2r() +
+  xlab("log2(fold change)") +
+  ylab("-log10(q-value)") +
+  theme(legend.position="none") +
+  scale_color_manual(values=c("black","red"))
+
+```
+
+3. What effect does DCA have on the gastric and intestinal microbiota?
+	a. Gastric samples: compare 16.1 G – 16.5 G (uninfected INS-GAS mice given water alone) vs. 16.6 G – 16.10 G (uninfected INS-GAS mice give water supplemented with 100 uM DCA).
+
+```{r echo=FALSE}
+diff_num5 <- dim(differentials_DCA_gastric_uninfected[which(differentials_DCA_gastric_uninfected$we.eBH < Pcutoff),])[1]
+cat(paste0("number of significantly changed taxa: ", diff_num5, "\n"))
+differentials_DCA_gastric_uninfected_tab <- differentials_DCA_gastric_uninfected %>% left_join(taxonomy) %>% filter(we.eBH < Pcutoff) %>% select(diff.btw, we.eBH, Taxon)
+colnames(differentials_DCA_gastric_uninfected_tab) = c("log2FC","q-value","Taxon")
+differentials_DCA_gastric_uninfected_tab
+
+differentials_DCA_gastric_uninfected %>%
+  left_join(taxonomy) %>%
+  mutate(Significant=if_else(we.eBH < Pcutoff,TRUE, FALSE)) %>%
+  mutate(Taxon=as.character(Taxon)) %>%
+  mutate(TaxonToPrint=if_else(we.eBH < Pcutoff, Taxon, "")) %>% #only provide a label to significant results
+  ggplot(aes(x=diff.btw, y=-log10(we.eBH), color=Significant, label=TaxonToPrint)) +
+  geom_text_repel(size=1.5, nudge_y=0.1) +
+  geom_point(alpha=0.6, shape=16) +
+  theme_q2r() +
+  xlab("log2(fold change)") +
+  ylab("-log10(q-value)") +
+  theme(legend.position="none") +
+  scale_color_manual(values=c("black","red"))
+
+```
+
+  b.Fecal samples: compare 16.1 F – 16.5 F (uninfected INS-GAS mice given water alone) vs. 16.6 F – 16.10 F (uninfected INS-GAS mice given water supplemented with 100 uM DCA).
+
+```{r echo=FALSE}
+diff_num6 <- dim(differentials_DCA_fecal_uninfected[which(differentials_DCA_fecal_uninfected$we.eBH < Pcutoff),])[1]
+cat(paste0("number of significantly changed taxa: ", diff_num6, "\n"))
+differentials_DCA_fecal_uninfected_tab <- differentials_DCA_fecal_uninfected %>% left_join(taxonomy) %>% filter(we.eBH < Pcutoff) %>% select(diff.btw, we.eBH, Taxon)
+colnames(differentials_DCA_fecal_uninfected_tab) = c("log2FC","q-value","Taxon")
+differentials_DCA_fecal_uninfected_tab
+
+differentials_DCA_fecal_uninfected %>%
+  left_join(taxonomy) %>%
+  mutate(Significant=if_else(we.eBH < Pcutoff,TRUE, FALSE)) %>%
+  mutate(Taxon=as.character(Taxon)) %>%
+  mutate(TaxonToPrint=if_else(we.eBH < Pcutoff, Taxon, "")) %>% #only provide a label to significant results
+  ggplot(aes(x=diff.btw, y=-log10(we.eBH), color=Significant, label=TaxonToPrint)) +
+  geom_text_repel(size=1.5, nudge_y=0.1) +
+  geom_point(alpha=0.6, shape=16) +
+  theme_q2r() +
+  xlab("log2(fold change)") +
+  ylab("-log10(q-value)") +
+  theme(legend.position="none") +
+  scale_color_manual(values=c("black","red"))
+
+```
+
+4. What effect does H. pylori have on the gastric and intestinal microbiota? (NOTE: some of these animals we were unable to culture back H. pylori. You may be able to see if it’s worth including in the comparisons if you don’t see Helicobacter 16S sequences in your analysis).
+	a. Gastric samples: compare 16.1 G – 16.5 G (uninfected INS-GAS mice given water alone) vs. 16.11 G – 16.15 G (H. pylori infected INS-GAS mice given water alone)
+
+```{r echo=FALSE}
+diff_num7 <- dim(differentials_infection_gastric_H20[which(differentials_infection_gastric_H20$we.eBH < Pcutoff),])[1]
+cat(paste0("number of significantly changed taxa: ", diff_num7, "\n"))
+differentials_infection_gastric_H20_tab <- differentials_infection_gastric_H20 %>% left_join(taxonomy) %>% filter(we.eBH < Pcutoff) %>% select(diff.btw, we.eBH, Taxon)
+colnames(differentials_infection_gastric_H20_tab) = c("log2FC","q-value","Taxon")
+differentials_infection_gastric_H20_tab
+
+differentials_infection_gastric_H20 %>%
+  left_join(taxonomy) %>%
+  mutate(Significant=if_else(we.eBH < Pcutoff,TRUE, FALSE)) %>%
+  mutate(Taxon=as.character(Taxon)) %>%
+  mutate(TaxonToPrint=if_else(we.eBH < Pcutoff, Taxon, "")) %>% #only provide a label to significant results
+  ggplot(aes(x=diff.btw, y=-log10(we.eBH), color=Significant, label=TaxonToPrint)) +
+  geom_text_repel(size=1.5, nudge_y=0.1) +
+  geom_point(alpha=0.6, shape=16) +
+  theme_q2r() +
+  xlab("log2(fold change)") +
+  ylab("-log10(q-value)") +
+  theme(legend.position="none") +
+  scale_color_manual(values=c("black","red"))
+
+```
+
+  b. Gastric samples: compare 16.6 G- 16.10 G (uninfected INS-GAS mice give water supplemented with 100 uM DCA) vs. 16.16 G – 16.20 G (H. pylori infected INS-GAS mice give water supplemented with 100 uM DCA).
+
+```{r echo=FALSE}
+diff_num8 <- dim(differentials_infection_gastric_DCA[which(differentials_infection_gastric_DCA$we.eBH < Pcutoff),])[1]
+cat(paste0("number of significantly changed taxa: ", diff_num8, "\n"))
+differentials_infection_gastric_DCA_tab <- differentials_infection_gastric_DCA %>% left_join(taxonomy) %>% filter(we.eBH < Pcutoff) %>% select(diff.btw, we.eBH, Taxon)
+colnames(differentials_infection_gastric_DCA_tab) = c("log2FC","q-value","Taxon")
+differentials_infection_gastric_DCA_tab
+
+differentials_infection_gastric_DCA %>%
+  left_join(taxonomy) %>%
+  mutate(Significant=if_else(we.eBH < Pcutoff,TRUE, FALSE)) %>%
+  mutate(Taxon=as.character(Taxon)) %>%
+  mutate(TaxonToPrint=if_else(we.eBH < Pcutoff, Taxon, "")) %>% #only provide a label to significant results
+  ggplot(aes(x=diff.btw, y=-log10(we.eBH), color=Significant, label=TaxonToPrint)) +
+  geom_text_repel(size=1.5, nudge_y=0.1) +
+  geom_point(alpha=0.6, shape=16) +
+  theme_q2r() +
+  xlab("log2(fold change)") +
+  ylab("-log10(q-value)") +
+  theme(legend.position="none") +
+  scale_color_manual(values=c("black","red"))
+
+```
+
+  c. Fecal samples: compare 16.1 F – 16.5 F (uninfected INS-GAS mice given water alone) vs. 16.11 F – 16.15 F (H. pylori infected INS-GAS mice given water alone)
+
+```{r echo=FALSE}
+diff_num9 <- dim(differentials_infection_fecal_H20[which(differentials_infection_fecal_H20$we.eBH < Pcutoff),])[1]
+cat(paste0("number of significantly changed taxa: ", diff_num9, "\n"))
+differentials_infection_fecal_H20_tab <- differentials_infection_fecal_H20 %>% left_join(taxonomy) %>% filter(we.eBH < Pcutoff) %>% select(diff.btw, we.eBH, Taxon)
+colnames(differentials_infection_fecal_H20_tab) = c("log2FC","q-value","Taxon")
+differentials_infection_fecal_H20_tab
+
+differentials_infection_fecal_H20 %>%
+  left_join(taxonomy) %>%
+  mutate(Significant=if_else(we.eBH < Pcutoff,TRUE, FALSE)) %>%
+  mutate(Taxon=as.character(Taxon)) %>%
+  mutate(TaxonToPrint=if_else(we.eBH < Pcutoff, Taxon, "")) %>% #only provide a label to significant results
+  ggplot(aes(x=diff.btw, y=-log10(we.eBH), color=Significant, label=TaxonToPrint)) +
+  geom_text_repel(size=1.5, nudge_y=0.1) +
+  geom_point(alpha=0.6, shape=16) +
+  theme_q2r() +
+  xlab("log2(fold change)") +
+  ylab("-log10(q-value)") +
+  theme(legend.position="none") +
+  scale_color_manual(values=c("black","red"))
+
+```
+
+	d. Fecal samples: compare 16.6 F- 16.10 F (uninfected INS-GAS mice give water supplemented with 100 uM DCA) vs. 16.16 F – 16.20 F (H. pylori infected INS-GAS mice give water supplemented with 100 uM DCA).
+
+```{r echo=FALSE}
+diff_num10 <- dim(differentials_infection_fecal_DCA[which(differentials_infection_fecal_DCA$we.eBH < Pcutoff),])[1]
+cat(paste0("number of significantly changed taxa: ", diff_num10, "\n"))
+differentials_infection_fecal_DCA_tab <- differentials_infection_fecal_DCA %>% left_join(taxonomy) %>% filter(we.eBH < Pcutoff) %>% select(diff.btw, we.eBH, Taxon)
+colnames(differentials_infection_fecal_DCA_tab) = c("log2FC","q-value","Taxon")
+differentials_infection_fecal_DCA_tab
+
+differentials_infection_fecal_DCA %>%
+  left_join(taxonomy) %>%
+  mutate(Significant=if_else(we.eBH < Pcutoff,TRUE, FALSE)) %>%
+  mutate(Taxon=as.character(Taxon)) %>%
+  mutate(TaxonToPrint=if_else(we.eBH < Pcutoff, Taxon, "")) %>% #only provide a label to significant results
+  ggplot(aes(x=diff.btw, y=-log10(we.eBH), color=Significant, label=TaxonToPrint)) +
+  geom_text_repel(size=1.5, nudge_y=0.1) +
+  geom_point(alpha=0.6, shape=16) +
+  theme_q2r() +
+  xlab("log2(fold change)") +
+  ylab("-log10(q-value)") +
+  theme(legend.position="none") +
+  scale_color_manual(values=c("black","red"))
+
+```
+
+5. Overall differences in the gastric among the 4 groups:
+		a. 16.1 G -16.5 G (uninfected INS-GAS mice given water alone)
+		b. 16.6 G- 16.10 G (uninfected INS-GAS mice give water supplemented with 100 uM DCA)
+		c. 16.11 G – 16.15 G (H. pylori infected INS-GAS mice given water alone)
+    d. 16.16 G – 16.20 G (H. pylori infected INS-GAS mice give water supplemented with 100 uM DCA)
+
+```{r echo=FALSE}
+diff_num11 <- dim(differentials_4groups_gastric[which(differentials_4groups_gastric$we.eBH < Pcutoff),])[1]
+cat(paste0("number of significantly changed taxa: ", diff_num11, "\n"))
+differentials_4groups_gastric_tab <- differentials_4groups_gastric %>% left_join(taxonomy) %>% filter(we.eBH < Pcutoff) %>% select(diff.btw, we.eBH, Taxon)
+colnames(differentials_4groups_gastric_tab) = c("log2FC","q-value","Taxon")
+differentials_4groups_gastric_tab
+
+differentials_4groups_gastric %>%
+  left_join(taxonomy) %>%
+  mutate(Significant=if_else(we.eBH < Pcutoff,TRUE, FALSE)) %>%
+  mutate(Taxon=as.character(Taxon)) %>%
+  mutate(TaxonToPrint=if_else(we.eBH < Pcutoff, Taxon, "")) %>% #only provide a label to significant results
+  ggplot(aes(x=diff.btw, y=-log10(we.eBH), color=Significant, label=TaxonToPrint)) +
+  geom_text_repel(size=1.5, nudge_y=0.1) +
+  geom_point(alpha=0.6, shape=16) +
+  theme_q2r() +
+  xlab("log2(fold change)") +
+  ylab("-log10(q-value)") +
+  theme(legend.position="none") +
+  scale_color_manual(values=c("black","red"))
+
+```
+
+6. Overall differences in the intestinal microbiota in the 4 groups:
+		a. 16.1 F -16.5 F (uninfected INS-GAS mice given water alone)
+		b. 16.6 F- 16.10 F (uninfected INS-GAS mice give water supplemented with 100 uM DCA)
+		c. 16.11 F – 16.15 F (H. pylori infected INS-GAS mice given water alone)
+    d. 16.16 F – 16.20 F (H. pylori infected INS-GAS mice give water supplemented with 100 uM DCA)
+
+```{r echo=FALSE}
+diff_num12 <- dim(differentials_4groups_fecal[which(differentials_4groups_fecal$we.eBH < Pcutoff),])[1]
+cat(paste0("number of significantly changed taxa: ", diff_num12, "\n"))
+differentials_4groups_fecal_tab <- differentials_4groups_fecal %>% left_join(taxonomy) %>% filter(we.eBH < Pcutoff) %>% select(diff.btw, we.eBH, Taxon)
+colnames(differentials_4groups_fecal_tab) = c("log2FC","q-value","Taxon")
+differentials_4groups_fecal_tab
+
+differentials_4groups_fecal %>%
+  left_join(taxonomy) %>%
+  mutate(Significant=if_else(we.eBH < Pcutoff,TRUE, FALSE)) %>%
+  mutate(Taxon=as.character(Taxon)) %>%
+  mutate(TaxonToPrint=if_else(we.eBH < Pcutoff, Taxon, "")) %>% #only provide a label to significant results
+  ggplot(aes(x=diff.btw, y=-log10(we.eBH), color=Significant, label=TaxonToPrint)) +
+  geom_text_repel(size=1.5, nudge_y=0.1) +
+  geom_point(alpha=0.6, shape=16) +
+  theme_q2r() +
+  xlab("log2(fold change)") +
+  ylab("-log10(q-value)") +
+  theme(legend.position="none") +
+  scale_color_manual(values=c("black","red"))
+
+```
