@@ -19,4 +19,4 @@ Running on new respublica by:
 snakemake --latency-wait 10 -j 10 -p -c "sbatch --job-name={params.jobName} --mem={params.mem} -c {threads} --time=360 -e sbatch/{params.jobName}.e -o sbatch/{params.jobName}.o"
 
 ## Workflow
-![alt text](https://github.research.chop.edu/dic/Jenny_16SrRNA_20220106/blob/master/workflow/DAG.png?raw=true)
+![alt text](https://github.com/chaodi51/16S_rRNAseq_gastric/blob/master/workflow/DAG.png?raw=true)
